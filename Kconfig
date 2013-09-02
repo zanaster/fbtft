@@ -61,6 +61,10 @@ config FB_TFT_ST7735R
 	depends on FB_TFT
 	help
 	  Generic Framebuffer support for ST7735R
+	  
+config FB_ST7565
+    tristate "FB driver for the ST7565R LCD Controller"
+    depends on FB_TFT
 
 config FB_FLEX
 	tristate "Generic FB driver for TFT LCD displays"

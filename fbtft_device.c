@@ -483,6 +483,24 @@ static struct fbtft_device_display displays[] = {
 			}
 		}
 	}, {
+    		.name = "st7565rfb",
+    		.spi = &(struct spi_board_info) {
+            .modalias = "fb_st7565",
+            .max_speed_hz = 16000000,
+            .mode = SPI_MODE_0,
+            .platform_data = &(struct fbtft_platform_data) {
+				.display = {
+					.buswidth = 8,
+				},
+                    .gpios = (const struct fbtft_gpio []) {
+        					{ "reset", 25 },
+        					{ "dc", 24 },
+        					{ "led", 23 },
+                            {},
+                    },
+              }
+         }
+	},{
 		.name = "spidev",
 		.spi = &(struct spi_board_info) {
 			.modalias = "spidev",
