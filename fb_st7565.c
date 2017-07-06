@@ -29,10 +29,13 @@
 #include "fbtft.h"
 
 #define DRVNAME		"fb_st7565"
-#define WIDTH		132
+#define WIDTH		128
 #define HEIGHT		64
-#define TXBUFLEN   1024 //128 x 8
-#define DEFAULT_GAMMA	"10"
+#define MAX_WIDTH	132
+/* gamma sets the contrast in the range 0x00 to 0x40 hex (0-63 decimal)
+ * echo <contrast> > /sys/class/graphics/<framebuffer device>/gamma
+ */
+#define DEFAULT_GAMMA	"0x00"
 
 #define CMD_DISPLAY_OFF 0xAE
 #define CMD_DISPLAY_ON 0xAF
@@ -43,7 +46,9 @@
 #define CMD_SET_COLUMN_UPPER 0x10
 #define CMD_SET_COLUMN_LOWER 0x00
 
+/* x-axis normal */
 #define CMD_SET_ADC_NORMAL 0xA0
+/* x-axis flipped */
 #define CMD_SET_ADC_REVERSE 0xA1
 
 #define CMD_SET_DISP_NORMAL 0xA6
@@ -61,8 +66,8 @@
 #define CMD_SET_COM_REVERSE 0xC8
 #define CMD_SET_POWER_CONTROL 0x28
 #define CMD_SET_RESISTOR_RATIO 0x20
-#define CMD_SET_VOLUME_FIRST 0x81
-#define CMD_SET_VOLUME_SECOND 0
+#define CMD_SET_VOLUME 0x81
+#define CMD_SET_VOLUME_LEVEL 0x00
 #define CMD_SET_STATIC_OFF 0xAC
 #define CMD_SET_STATIC_ON 0xAD
 #define CMD_SET_STATIC_REG 0x0
@@ -72,6 +77,9 @@
 #define CMD_SET_BOOSTER_6 3
 #define CMD_NOP 0xE3
 #define CMD_TEST 0xF0
+
+#define LINES_PER_PAGE 8
+
 
 void write_data_command(struct fbtft_par *par, unsigned dc, u32 val)
 {
@@ -88,6 +96,9 @@ void write_data_command(struct fbtft_par *par, unsigned dc, u32 val)
 
 static int init_display(struct fbtft_par *par)
 {
+	char page;
+	char column;
+
 	fbtft_par_dbg(DEBUG_INIT_DISPLAY, par, "%s()\n", __func__);
 
 	par->fbtftops.reset(par);
@@ -95,50 +106,51 @@ static int init_display(struct fbtft_par *par)
 	mdelay(550);
 
 	gpio_set_value(par->gpio.dc, 0);
-	  // LCD bias select
-	write_reg(par,CMD_SET_BIAS_7);
-	  // ADC select
-	write_reg(par,CMD_SET_ADC_NORMAL);
-	  // SHL select
-	write_reg(par,CMD_SET_COM_NORMAL);
-	  // Initial display line
-	write_reg(par,CMD_SET_DISP_START_LINE);
+	/* LCD bias select */
+	write_reg(par, CMD_SET_BIAS_7);
+	/* ADC select - sets the column direction, i.e. left to right or right to left */
+	write_reg(par, CMD_SET_ADC_REVERSE);
+	/* SHL select */
+	write_reg(par, CMD_SET_COM_NORMAL);
+	/* Initial display line */
+	write_reg(par, CMD_SET_DISP_START_LINE);
 
-	  // turn on voltage converter (VC=1, VR=0, VF=0)
-	write_reg(par,CMD_SET_POWER_CONTROL | 0x4);
-	  // wait for 50% rising
+	/* turn on voltage converter (VC=1, VR=0, VF=0) */
+	write_reg(par, CMD_SET_POWER_CONTROL | 0x4);
+	/* wait for 50% rising */
 	mdelay(5);
 
-	  // turn on voltage regulator (VC=1, VR=1, VF=0)
-	write_reg(par,CMD_SET_POWER_CONTROL | 0x6);
-	  // wait >=50ms
+	/* turn on voltage regulator (VC=1, VR=1, VF=0) */
+	write_reg(par, CMD_SET_POWER_CONTROL | 0x6);
+	/* wait >=50ms */
 	mdelay(5);
-	  // turn on voltage follower (VC=1, VR=1, VF=1)
-	write_reg(par,CMD_SET_POWER_CONTROL | 0x7);
-	  // wait
+	/* turn on voltage follower (VC=1, VR=1, VF=1) */
+	write_reg(par, CMD_SET_POWER_CONTROL | 0x7);
+	/* wait */
 	mdelay(10);
 
-	  // set lcd operating voltage (regulator resistor, ref voltage resistor)
-	write_reg(par,CMD_SET_RESISTOR_RATIO | 0x6);
+	/* set lcd operating voltage (regulator resistor, ref voltage resistor) */
+	write_reg(par, CMD_SET_RESISTOR_RATIO | 0x6);
 
-	write_reg(par,CMD_DISPLAY_ON);
-	write_reg(par,CMD_SET_ALLPTS_NORMAL);
+	write_reg(par, CMD_DISPLAY_ON);
+	write_reg(par, CMD_SET_ALLPTS_NORMAL);
 	mdelay(30);
 
-	write_reg(par,CMD_SET_VOLUME_FIRST);
-	write_reg(par,CMD_SET_VOLUME_SECOND | (0x03 & 0x3f));
+	/* enable volume set mode (contrast) */
+	write_reg(par, CMD_SET_VOLUME);
+	/* set contrast in range 0 to 64 */
+	write_reg(par, CMD_SET_VOLUME_LEVEL & 0x3f);
 
-	//clear screen
-	char p,c;
-	for(p = 0; p < 8; p++) {
-		write_data_command(par,0,CMD_SET_PAGE | p);
-
-	    for(c = 0; c < 132; c++) {
-	    	write_data_command(par,0, CMD_SET_COLUMN_LOWER | (c & 0xf));
-	    	write_data_command(par,0, CMD_SET_COLUMN_UPPER | ((c >> 4) & 0xf));
-	    	write_data_command(par,1, 0x00);
-	    }
-	  }
+	/* clear screen */
+	for(page = 0; page < 8; page++) {
+		write_data_command(par, 0, CMD_SET_PAGE | page);
+		/* Loop through max columns */
+		for(column = 0; column < MAX_WIDTH; column++) {
+			write_data_command(par, 0, CMD_SET_COLUMN_LOWER | (column & 0xf));
+			write_data_command(par, 0, CMD_SET_COLUMN_UPPER | ((column >> 4) & 0xf));
+			write_data_command(par, 1, 0x00);
+		}
+	}
 
 	return 0;
 }
@@ -148,7 +160,7 @@ static void set_addr_win(struct fbtft_par *par, int xs, int ys, int xe, int ye)
 	fbtft_par_dbg(DEBUG_SET_ADDR_WIN, par,
 		"%s(xs=%d, ys=%d, xe=%d, ye=%d)\n", __func__, xs, ys, xe, ye);
 
-	// TODO : implement set_addr_win
+	/* Not required for this display, too small to be worthwhile! */
 
 }
 
@@ -156,7 +168,7 @@ static int set_var(struct fbtft_par *par)
 {
 	fbtft_par_dbg(DEBUG_INIT_DISPLAY, par, "%s()\n", __func__);
 
-	// TODO : implement additional functions like rotate settings
+  /* Not required for this display, no features to implement */
 
 	return 0;
 }
@@ -166,32 +178,58 @@ static int write_vmem(struct fbtft_par *par, size_t offset, size_t len)
 	u16 *vmem16 = (u16 *)par->info->screen_base;
 	u8 *buf = par->txbuf.buf;
 	u8 *p_buf = par->txbuf.buf;
-	int x, y, i;
+	int x, y, i, j;
 	int ret = 0;
-	char p, c;
+	char page, column;
 
 	fbtft_par_dbg(DEBUG_WRITE_VMEM, par, "%s()\n", __func__);
 
-	for (y=0;y<8;y++) {
-	for (x=0;x<132;x++) {
-			*buf = 0x00;
-			for (i=0;i<8;i++) {
-				*buf |= (vmem16[(y*8+i)*132+x] ? 1 : 0) << i;
+	switch (par->info->var.rotate) {
+	case 0:
+		/* There are 8 lines per page and 8 pages in the y-axis = yres of 64 */
+		for (y = 0; y < par->info->var.yres/LINES_PER_PAGE; y++) {
+			for (x=0; x < par->info->var.xres; x++) {
+				*buf = 0x00;
+				/* Loop through each bit in the byte and set the bit (turn on pixel) if colour is not black */
+				for (i = 0; i < 8; i++) {
+					*buf |= (vmem16[(y*8+i) * par->info->var.xres + x] ? 1 : 0) << i;
+				}
+				buf++;
 			}
-			buf++;
+		}
+	break;
+	
+	case 180:
+		/* When the display is flipped, start from the end of the display buffer
+		and work backwards */
+		/* There are 8 lines per page and 8 pages in the y-axis = yres of 64 */
+		buf += (par->info->var.xres * par->info->var.yres/LINES_PER_PAGE) - 1;
+		for (y = 0; y < par->info->var.yres/LINES_PER_PAGE; y++) {
+			for (x=0; x < par->info->var.xres; x++) {
+				*buf = 0x00;
+				/* Loop through each bit in the byte and set the bit (turn on pixel) if colour is not black */
+				j = 8;
+				for (i = 0; i < 8; i++) {
+					j--;
+					*buf |= (vmem16[(y*8+i) * par->info->var.xres + x] ? 1 : 0) << j;
+				}
+				buf--;
+			}
+		}
+	break;
+}
+ 
+	
+	for(page = 0; page < 8; page++) {
+		write_data_command(par, 0, CMD_SET_PAGE | page);
+		write_data_command(par, 0, CMD_SET_COLUMN_LOWER | ((MAX_WIDTH - par->info->var.xres) & 0xf));
+		write_data_command(par, 0, CMD_SET_COLUMN_UPPER | (((MAX_WIDTH - par->info->var.xres) >> 4) & 0x0F));
+		write_data_command(par, 0, CMD_RMW);
+		for(column = 0; column < par->info->var.xres; column++) {
+			write_data_command(par, 1, *p_buf);
+			p_buf++;
 		}
 	}
-
-	for(p = 0; p < 8; p++) {
-		write_data_command(par,0 ,CMD_SET_PAGE | p);
-		write_data_command(par,0 ,CMD_SET_COLUMN_LOWER | ((1) & 0xf));
-		write_data_command(par,0 ,CMD_SET_COLUMN_UPPER | (((1) >> 4) & 0x0F));
-		write_data_command(par,0 ,CMD_RMW);
-	    for(c = 0; c < 132; c++) {
-			write_data_command(par,1, *p_buf);
-	    	p_buf++;
-	    }
-	  }
 
 	return ret;
 }
@@ -199,7 +237,13 @@ static int write_vmem(struct fbtft_par *par, size_t offset, size_t len)
 static int set_gamma(struct fbtft_par *par, unsigned long *curves)
 {
 	fbtft_par_dbg(DEBUG_INIT_DISPLAY, par, "%s()\n", __func__);
-	// TODO : gamma can be used to control contrast
+
+	/* apply mask */
+	curves[0] &= 0x3f;
+	/* enable volume set mode (contrast) */
+	write_reg(par, CMD_SET_VOLUME);
+	/* set contrast in range 0 to 63 */
+	write_reg(par, curves[0]);
 	return 0;
 }
 
@@ -207,10 +251,10 @@ static struct fbtft_display display = {
 	.regwidth = 8,
 	.width = WIDTH,
 	.height = HEIGHT,
-	.txbuflen = TXBUFLEN,
+	.txbuflen = WIDTH * HEIGHT,
 	.gamma_num = 1,
 	.gamma_len = 1,
-	.gamma = DEFAULT_GAMMA,   // TODO : gamma can be used to control contrast
+	.gamma = DEFAULT_GAMMA,
 	.fbtftops = {
 		.init_display = init_display,
 		.set_addr_win = set_addr_win,
